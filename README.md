@@ -14,19 +14,19 @@ This project demonstrates an event-driven microservices architecture implemented
 - **Dockerized setup** for consistent development and testing environments  
 
 ### Architecture
-\`\`\`
+```text
 +-------------+    publish     +--------------+
-| Service A   |  --------->    | RabbitMQ     |
-| (publisher) |                | (broker)     |
+| Service A   |  --------->    |   RabbitMQ   |
+| (publisher) |                |   (broker)   |
 +-------------+                +--------------+
-       ^                             |
-       | subscribe                   | deliver
-       |                             v
+       ^                              |
+       | subscribe                    | deliver
+       |                              v
 +-------------+              +--------------+
-| Service B   | <--------    | Service C    |
-| (consumer)  |   event      | (consumer)   |
+| Service B   | <--------    |  Service C   |
+| (consumer)  |    event     |  (consumer)  |
 +-------------+              +--------------+
-\`\`\`
+```
 
 ### Prerequisites
 - Docker  
@@ -34,42 +34,18 @@ This project demonstrates an event-driven microservices architecture implemented
 
 ### Installation & Usage
 1. **Clone the repository**  
-   \`\`\`bash
+   ```bash
    git clone https://github.com/your-username/event-driven-microservices.git
    cd event-driven-microservices
-   \`\`\`
-
+   ```
 2. **Build and start containers**  
-   \`\`\`bash
+   ```bash
    docker-compose up --build
-   \`\`\`
-
+   ```
 3. **Verify services**  
-   Open a browser or API client and visit \`http://localhost:15672\` (RabbitMQ Management UI) with default credentials (\`guest\` / \`guest\`). Ensure all microservices are running.
-
+   Open your browser or API client and visit [http://localhost:15672](http://localhost:15672) (RabbitMQ Management UI) with default credentials (`guest` / `guest`). Ensure all microservices are running.
 4. **Publish test events**  
    Use provided client scripts or HTTP endpoints to send events and observe inter-service communication via RabbitMQ.
-
-### Project Structure
-\`\`\`
-.
-├── docker-compose.yml        # Orchestrates RabbitMQ and all microservices
-├── rabbitmq/                 # RabbitMQ configuration (definitions, users)
-│   └── definitions.json
-├── service_a/                # Publisher microservice
-│   └── app.py
-├── service_b/                # Consumer microservice
-│   └── app.py
-├── service_c/                # Consumer-producer microservice
-│   └── app.py
-└── README.md                 # This file
-\`\`\`
-
-### Contributing
-Contributions are welcome! Please open an issue for discussion or submit a pull request with your changes.
-
-### License
-This project is licensed under the MIT License.
 
 ---
 
@@ -82,22 +58,22 @@ Bu proje, RabbitMQ mesaj aracısı kullanılarak Python ile geliştirilmiş olay
 - RabbitMQ üzerinden **olay odaklı iletişim**  
 - **Gevşek bağlılık**: servisler bağımsız çalışır, iletişim mesaj kuyruğu ile sağlanır  
 - **Ölçeklenebilirlik**: konteyner sayısını artırarak servis örneklerini çoğaltabilirsiniz  
-- **Docker ile çevre birimi** geliştirme ve test için tutarlı ortam  
+- **Docker ile tutarlı geliştirme ve test ortamı**  
 
 ### Mimari
-\`\`\`
+```text
 +-------------+    yayınla     +--------------+
-| Servis A    |  --------->    | RabbitMQ     |
-| (yayıncı)   |                | (aracı)      |
+| Servis A    |  --------->    |   RabbitMQ   |
+| (yayıncı)   |                |   (aracı)    |
 +-------------+                +--------------+
-       ^                             |
-       | abone                        | ilet
-       |                             v
+       ^                              |
+       | abone                       | ilet
+       |                              v
 +-------------+              +--------------+
-| Servis B    | <--------    | Servis C     |
-| (abone)     |   olay       | (tüketici)   |
+| Servis B    | <--------    |  Servis C    |
+| (abone)     |    olay      | (tüketici)   |
 +-------------+              +--------------+
-\`\`\`
+```
 
 ### Gereksinimler
 - Docker  
@@ -105,39 +81,16 @@ Bu proje, RabbitMQ mesaj aracısı kullanılarak Python ile geliştirilmiş olay
 
 ### Kurulum & Kullanım
 1. **Depoyu klonlayın**  
-   \`\`\`bash
+   ```bash
    git clone https://github.com/your-username/event-driven-microservices.git
    cd event-driven-microservices
-   \`\`\`
-
+   ```
 2. **Konteynerleri oluştur ve başlat**  
-   \`\`\`bash
+   ```bash
    docker-compose up --build
-   \`\`\`
-
+   ```
 3. **Servisleri doğrulayın**  
-   Tarayıcıda veya API istemcisinde \`http://localhost:15672\` adresini açın (RabbitMQ Yönetim Arayüzü) ve varsayılan kullanıcı adı/şifre (\`guest\` / \`guest\`) ile giriş yapın. Tüm mikroservislerin çalıştığını kontrol edin.
-
+   Tarayıcınızda veya API istemcinizde [http://localhost:15672](http://localhost:15672) adresine gidin (RabbitMQ Yönetim UI) ve varsayılan kullanıcı adı/şifre (`guest` / `guest`) ile giriş yapın. Tüm mikroservislerin çalıştığını kontrol edin.
 4. **Test olayları yayınlayın**  
    Sağlanan istemci scriptlerini veya HTTP uç noktalarını kullanarak olay yayınlayın ve RabbitMQ üzerinden servisler arası iletişimi gözlemleyin.
 
-### Proje Yapısı
-\`\`\`
-.
-├── docker-compose.yml        # RabbitMQ ve servisleri koordine eder
-├── rabbitmq/                 # RabbitMQ konfigürasyonu (tanımlar, kullanıcılar)
-│   └── definitions.json
-├── service_a/                # Yayıncı mikroservis
-│   └── app.py
-├── service_b/                # Tüketici mikroservis
-│   └── app.py
-├── service_c/                # Tüketici-yayıncı mikroservis
-│   └── app.py
-└── README.md                 # Bu dosya
-\`\`\`
-
-### Katkıda Bulunma
-Katkılarınızı bekliyoruz! Tartışmak için issue açabilir veya değişikliklerinizi içeren pull request gönderebilirsiniz.
-
-### Lisans
-Bu proje MIT Lisansı ile lisanslanmıştır.
