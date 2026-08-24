@@ -1,0 +1,290 @@
+name: Temporary GridUp Weather Export
+
+on:
+  push:
+    branches:
+      - tmp-gridup-weather-20260825
+    paths:
+      - .github/workflows/tmp-gridup-weather.yml
+
+permissions:
+  contents: write
+
+jobs:
+  export-weather:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-gridup-weather-20260825
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Fetch district-level historical weather
+        shell: bash
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import json
+          import math
+          import time
+          import unicodedata
+          from pathlib import Path
+
+          import requests
+          import pandas as pd
+
+          START = '2025-01-01'
+          END = '2026-07-31'
+          OUT = Path('tmp_gridup_weather')
+          OUT.mkdir(exist_ok=True)
+
+          LOCATIONS = [
+              ('MANİSA', 'AHMETLİ', 'MANİSA>AHMETLİ'),
+              ('MANİSA', 'AKHİSAR', 'MANİSA>AKHİSAR'),
+              ('MANİSA', 'ALAŞEHİR', 'MANİSA>ALAŞEHİR'),
+              ('MANİSA', 'DEMİRCİ', 'MANİSA>DEMİRCİ'),
+              ('MANİSA', 'GÖLMARMARA', 'MANİSA>GÖLMARMARA'),
+              ('MANİSA', 'GÖRDES', 'MANİSA>GÖRDES'),
+              ('MANİSA', 'KIRKAĞAÇ', 'MANİSA>KIRKAĞAÇ'),
+              ('MANİSA', 'KULA', 'MANİSA>KULA'),
+              ('MANİSA', 'KÖPRÜBAŞI', 'MANİSA>KÖPRÜBAŞI'),
+              ('MANİSA', 'SALİHLİ', 'MANİSA>SALİHLİ'),
+              ('MANİSA', 'SARIGÖL', 'MANİSA>SARIGÖL'),
+              ('MANİSA', 'SARUHANLI', 'MANİSA>SARUHANLI'),
+              ('MANİSA', 'SELENDİ', 'MANİSA>SELENDİ'),
+              ('MANİSA', 'SOMA', 'MANİSA>SOMA'),
+              ('MANİSA', 'TURGUTLU', 'MANİSA>TURGUTLU'),
+              ('MANİSA', 'YUNUSEMRE', 'MANİSA>YUNUSEMRE'),
+              ('MANİSA', 'ŞEHZADELER', 'MANİSA>ŞEHZADELER'),
+              ('İZMİR', 'BAYINDIR', 'İZMİR>GÜNEY BÖLGE>BAYINDIR'),
+              ('İZMİR', 'BEYDAĞ', 'İZMİR>GÜNEY BÖLGE>BEYDAĞ'),
+              ('İZMİR', 'KARABURUN', 'İZMİR>GÜNEY BÖLGE>KARABURUN'),
+              ('İZMİR', 'KEMALPAŞA', 'İZMİR>GÜNEY BÖLGE>KEMALPAŞA'),
+              ('İZMİR', 'KİRAZ', 'İZMİR>GÜNEY BÖLGE>KİRAZ'),
+              ('İZMİR', 'MENDERES', 'İZMİR>GÜNEY BÖLGE>MENDERES'),
+              ('İZMİR', 'SEFERİHİSAR', 'İZMİR>GÜNEY BÖLGE>SEFERİHİSAR'),
+              ('İZMİR', 'SELÇUK', 'İZMİR>GÜNEY BÖLGE>SELÇUK'),
+              ('İZMİR', 'TORBALI', 'İZMİR>GÜNEY BÖLGE>TORBALI'),
+              ('İZMİR', 'TİRE', 'İZMİR>GÜNEY BÖLGE>TİRE'),
+              ('İZMİR', 'URLA', 'İZMİR>GÜNEY BÖLGE>URLA'),
+              ('İZMİR', 'ÇEŞME', 'İZMİR>GÜNEY BÖLGE>ÇEŞME'),
+              ('İZMİR', 'ÖDEMİŞ', 'İZMİR>GÜNEY BÖLGE>ÖDEMİŞ'),
+              ('İZMİR', 'ALİAĞA', 'İZMİR>KUZEY BÖLGE>ALİAĞA'),
+              ('İZMİR', 'BERGAMA', 'İZMİR>KUZEY BÖLGE>BERGAMA'),
+              ('İZMİR', 'DİKİLİ', 'İZMİR>KUZEY BÖLGE>DİKİLİ'),
+              ('İZMİR', 'FOÇA', 'İZMİR>KUZEY BÖLGE>FOÇA'),
+              ('İZMİR', 'KINIK', 'İZMİR>KUZEY BÖLGE>KINIK'),
+              ('İZMİR', 'MENEMEN', 'İZMİR>KUZEY BÖLGE>MENEMEN'),
+              ('İZMİR', 'BALÇOVA', 'İZMİR>METROPOL>BALÇOVA'),
+              ('İZMİR', 'BAYRAKLI', 'İZMİR>METROPOL>BAYRAKLI'),
+              ('İZMİR', 'BORNOVA', 'İZMİR>METROPOL>BORNOVA'),
+              ('İZMİR', 'BUCA', 'İZMİR>METROPOL>BUCA'),
+              ('İZMİR', 'GAZİEMİR', 'İZMİR>METROPOL>GAZİEMİR'),
+              ('İZMİR', 'GÜZELBAHÇE', 'İZMİR>METROPOL>GÜZELBAHÇE'),
+              ('İZMİR', 'KARABAĞLAR', 'İZMİR>METROPOL>KARABAĞLAR'),
+              ('İZMİR', 'KARŞIYAKA', 'İZMİR>METROPOL>KARŞIYAKA'),
+              ('İZMİR', 'KONAK', 'İZMİR>METROPOL>KONAK'),
+              ('İZMİR', 'NARLIDERE', 'İZMİR>METROPOL>NARLIDERE'),
+              ('İZMİR', 'ÇİĞLİ', 'İZMİR>METROPOL>ÇİĞLİ'),
+          ]
+
+          # Verified district-centre fallbacks (WGS84). Geocoding is attempted first.
+          FALLBACK = {
+              'MANİSA>AHMETLİ': (38.519, 27.938), 'MANİSA>AKHİSAR': (38.918, 27.840),
+              'MANİSA>ALAŞEHİR': (38.350, 28.517), 'MANİSA>DEMİRCİ': (39.046, 28.659),
+              'MANİSA>GÖLMARMARA': (38.713, 27.914), 'MANİSA>GÖRDES': (38.932, 28.290),
+              'MANİSA>KIRKAĞAÇ': (39.106, 27.669), 'MANİSA>KULA': (38.548, 28.649),
+              'MANİSA>KÖPRÜBAŞI': (38.749, 28.404), 'MANİSA>SALİHLİ': (38.482, 28.139),
+              'MANİSA>SARIGÖL': (38.239, 28.697), 'MANİSA>SARUHANLI': (38.734, 27.568),
+              'MANİSA>SELENDİ': (38.744, 28.867), 'MANİSA>SOMA': (39.185, 27.609),
+              'MANİSA>TURGUTLU': (38.500, 27.705), 'MANİSA>YUNUSEMRE': (38.608, 27.418),
+              'MANİSA>ŞEHZADELER': (38.613, 27.430),
+              'İZMİR>GÜNEY BÖLGE>BAYINDIR': (38.217, 27.648), 'İZMİR>GÜNEY BÖLGE>BEYDAĞ': (38.086, 28.205),
+              'İZMİR>GÜNEY BÖLGE>KARABURUN': (38.637, 26.511), 'İZMİR>GÜNEY BÖLGE>KEMALPAŞA': (38.427, 27.417),
+              'İZMİR>GÜNEY BÖLGE>KİRAZ': (38.231, 28.204), 'İZMİR>GÜNEY BÖLGE>MENDERES': (38.254, 27.134),
+              'İZMİR>GÜNEY BÖLGE>SEFERİHİSAR': (38.197, 26.839), 'İZMİR>GÜNEY BÖLGE>SELÇUK': (37.949, 27.370),
+              'İZMİR>GÜNEY BÖLGE>TORBALI': (38.161, 27.358), 'İZMİR>GÜNEY BÖLGE>TİRE': (38.089, 27.735),
+              'İZMİR>GÜNEY BÖLGE>URLA': (38.322, 26.764), 'İZMİR>GÜNEY BÖLGE>ÇEŞME': (38.324, 26.303),
+              'İZMİR>GÜNEY BÖLGE>ÖDEMİŞ': (38.228, 27.972),
+              'İZMİR>KUZEY BÖLGE>ALİAĞA': (38.800, 26.972), 'İZMİR>KUZEY BÖLGE>BERGAMA': (39.121, 27.180),
+              'İZMİR>KUZEY BÖLGE>DİKİLİ': (39.072, 26.889), 'İZMİR>KUZEY BÖLGE>FOÇA': (38.670, 26.756),
+              'İZMİR>KUZEY BÖLGE>KINIK': (39.087, 27.383), 'İZMİR>KUZEY BÖLGE>MENEMEN': (38.607, 27.069),
+              'İZMİR>METROPOL>BALÇOVA': (38.393, 27.050), 'İZMİR>METROPOL>BAYRAKLI': (38.462, 27.166),
+              'İZMİR>METROPOL>BORNOVA': (38.466, 27.221), 'İZMİR>METROPOL>BUCA': (38.387, 27.174),
+              'İZMİR>METROPOL>GAZİEMİR': (38.322, 27.128), 'İZMİR>METROPOL>GÜZELBAHÇE': (38.370, 26.881),
+              'İZMİR>METROPOL>KARABAĞLAR': (38.369, 27.126), 'İZMİR>METROPOL>KARŞIYAKA': (38.456, 27.114),
+              'İZMİR>METROPOL>KONAK': (38.419, 27.128), 'İZMİR>METROPOL>NARLIDERE': (38.394, 27.001),
+              'İZMİR>METROPOL>ÇİĞLİ': (38.493, 27.053),
+          }
+
+          def norm(s: str) -> str:
+              s = s.replace('ı', 'i').replace('İ', 'I')
+              return ''.join(c for c in unicodedata.normalize('NFKD', s) if not unicodedata.combining(c)).upper()
+
+          session = requests.Session()
+          session.headers.update({'User-Agent': 'gridup-weather-enrichment/1.0'})
+
+          def get_json(url: str, params: dict, tries: int = 5, timeout: int = 120):
+              last = None
+              for attempt in range(tries):
+                  try:
+                      r = session.get(url, params=params, timeout=timeout)
+                      r.raise_for_status()
+                      data = r.json()
+                      if isinstance(data, dict) and data.get('error'):
+                          raise RuntimeError(data.get('reason', 'API error'))
+                      return data
+                  except Exception as exc:
+                      last = exc
+                      if attempt + 1 < tries:
+                          time.sleep(2 ** attempt)
+              raise RuntimeError(f'GET failed: {url}: {last}')
+
+          def geocode(province: str, district: str, location: str):
+              queries = [f'{district}, {province}, Türkiye', f'{district} {province}', district]
+              candidates = []
+              for q in queries:
+                  try:
+                      data = get_json('https://geocoding-api.open-meteo.com/v1/search', {
+                          'name': q, 'count': 20, 'language': 'tr', 'format': 'json', 'countryCode': 'TR'
+                      }, tries=3, timeout=45)
+                      candidates.extend(data.get('results') or [])
+                  except Exception:
+                      continue
+              p = norm(province)
+              d = norm(district)
+              scored = []
+              for x in candidates:
+                  if x.get('country_code') != 'TR':
+                      continue
+                  fields = ' '.join(str(x.get(k, '')) for k in ['name', 'admin1', 'admin2', 'admin3', 'admin4'])
+                  nf = norm(fields)
+                  score = 0
+                  if d in nf: score += 5
+                  if p in nf: score += 5
+                  if norm(str(x.get('name', ''))) == d: score += 5
+                  if str(x.get('feature_code', '')).startswith('PPL'): score += 1
+                  scored.append((score, x))
+              if scored:
+                  scored.sort(key=lambda z: z[0], reverse=True)
+                  best_score, best = scored[0]
+                  if best_score >= 5:
+                      return float(best['latitude']), float(best['longitude']), 'open_meteo_geocoding', best
+              lat, lon = FALLBACK[location]
+              return lat, lon, 'verified_fallback_centroid', {}
+
+          geocodes = []
+          for province, district, location in LOCATIONS:
+              lat, lon, method, raw = geocode(province, district, location)
+              geocodes.append({
+                  'lokasyon': location, 'province': province, 'district': district,
+                  'latitude': lat, 'longitude': lon, 'geocode_method': method,
+                  'geocode_name': raw.get('name'), 'geocode_admin1': raw.get('admin1'),
+                  'geocode_admin2': raw.get('admin2'), 'geocode_feature_code': raw.get('feature_code'),
+              })
+              print(f'geocode {location}: {lat:.4f},{lon:.4f} ({method})')
+
+          daily_vars = ','.join([
+              'temperature_2m_mean', 'temperature_2m_min', 'temperature_2m_max',
+              'apparent_temperature_mean', 'apparent_temperature_min', 'apparent_temperature_max',
+              'precipitation_sum', 'rain_sum', 'snowfall_sum',
+              'wind_speed_10m_max', 'wind_gusts_10m_max',
+              'shortwave_radiation_sum', 'sunshine_duration', 'daylight_duration',
+              'et0_fao_evapotranspiration'
+          ])
+
+          def weather_one(g: dict):
+              params = {
+                  'latitude': g['latitude'], 'longitude': g['longitude'],
+                  'start_date': START, 'end_date': END,
+                  'daily': daily_vars, 'timezone': 'Europe/Istanbul',
+                  'temperature_unit': 'celsius', 'wind_speed_unit': 'kmh',
+                  'precipitation_unit': 'mm', 'timeformat': 'iso8601'
+              }
+              # Archived, high-resolution forecast analyses (available from 2022).
+              source = 'open_meteo_historical_forecast'
+              endpoint = 'https://historical-forecast-api.open-meteo.com/v1/forecast'
+              data = get_json(endpoint, params, tries=5, timeout=180)
+              daily = data.get('daily') or {}
+              if not daily.get('time'):
+                  raise RuntimeError(f'No daily data for {g["lokasyon"]}')
+              frame = pd.DataFrame(daily)
+              frame.rename(columns={'time': 'tarih'}, inplace=True)
+              frame.insert(0, 'lokasyon', g['lokasyon'])
+              frame['latitude_requested'] = g['latitude']
+              frame['longitude_requested'] = g['longitude']
+              frame['latitude_grid'] = data.get('latitude')
+              frame['longitude_grid'] = data.get('longitude')
+              frame['elevation'] = data.get('elevation')
+              frame['weather_source'] = source
+              return frame
+
+          frames = []
+          failures = []
+          for i, g in enumerate(geocodes, 1):
+              try:
+                  f = weather_one(g)
+                  expected = (pd.Timestamp(END) - pd.Timestamp(START)).days + 1
+                  if len(f) != expected:
+                      raise RuntimeError(f'Expected {expected} days, got {len(f)}')
+                  frames.append(f)
+                  print(f'weather {i:02d}/{len(geocodes)} {g["lokasyon"]}: {len(f)} rows')
+              except Exception as exc:
+                  failures.append({'lokasyon': g['lokasyon'], 'error': repr(exc)})
+                  print(f'FAILED {g["lokasyon"]}: {exc}')
+              time.sleep(0.35)
+
+          if failures:
+              raise RuntimeError('Weather failures: ' + json.dumps(failures, ensure_ascii=False))
+
+          weather = pd.concat(frames, ignore_index=True)
+          weather['tarih'] = pd.to_datetime(weather['tarih']).dt.strftime('%Y-%m-%d')
+          weather.sort_values(['lokasyon', 'tarih'], inplace=True)
+
+          expected_days = (pd.Timestamp(END) - pd.Timestamp(START)).days + 1
+          assert len(weather) == len(LOCATIONS) * expected_days
+          assert weather[['lokasyon', 'tarih']].duplicated().sum() == 0
+          assert weather['lokasyon'].nunique() == len(LOCATIONS)
+
+          geocodes_df = pd.DataFrame(geocodes).sort_values('lokasyon')
+          weather_path = OUT / f'weather_district_daily_{START}_{END}.csv'
+          geo_path = OUT / 'district_geocodes.csv'
+          manifest_path = OUT / 'manifest.json'
+          weather.to_csv(weather_path, index=False)
+          geocodes_df.to_csv(geo_path, index=False)
+
+          manifest = {
+              'start': START, 'end': END, 'districts': len(LOCATIONS),
+              'days_per_district': expected_days, 'rows': int(len(weather)),
+              'source': 'Open-Meteo Historical Forecast API',
+              'endpoint': 'https://historical-forecast-api.open-meteo.com/v1/forecast',
+              'geocoding_source': 'Open-Meteo Geocoding API with verified WGS84 fallbacks',
+              'variables': [c for c in weather.columns if c not in {
+                  'lokasyon','tarih','latitude_requested','longitude_requested','latitude_grid','longitude_grid','elevation','weather_source'
+              }],
+              'missing_by_column': {k: int(v) for k, v in weather.isna().sum().items()},
+          }
+          manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
+          print(json.dumps(manifest, ensure_ascii=False, indent=2))
+          PY
+
+      - name: Upload weather artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gridup-weather-district-daily
+          path: tmp_gridup_weather/
+          retention-days: 3
+
+      - name: Commit temporary weather output to branch
+        shell: bash
+        run: |
+          git config user.name "gridup-weather-bot"
+          git config user.email "gridup-weather-bot@users.noreply.github.com"
+          git add tmp_gridup_weather
+          git commit -m "[weather-output] export temporary GridUp weather data"
+          git push origin HEAD:tmp-gridup-weather-20260825
