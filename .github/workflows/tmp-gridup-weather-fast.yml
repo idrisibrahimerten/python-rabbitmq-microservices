@@ -6,12 +6,12 @@ on:
     paths: [.github/workflows/tmp-gridup-weather-fast.yml]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   export-weather-fast:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,7 +21,7 @@ jobs:
           python-version: '3.12'
       - name: Install dependencies
         run: pip install --quiet requests pandas
-      - name: Fetch real district weather in batches
+      - name: Fetch real district weather with rate-limit pacing
         shell: bash
         run: |
           cat > /tmp/fetch_gridup_weather.py <<'PY'
@@ -38,38 +38,47 @@ jobs:
           ('İZMİR>KUZEY BÖLGE>ALİAĞA',38.800,26.972),('İZMİR>KUZEY BÖLGE>BERGAMA',39.121,27.180),('İZMİR>KUZEY BÖLGE>DİKİLİ',39.072,26.889),('İZMİR>KUZEY BÖLGE>FOÇA',38.670,26.756),('İZMİR>KUZEY BÖLGE>KINIK',39.087,27.383),('İZMİR>KUZEY BÖLGE>MENEMEN',38.607,27.069),
           ('İZMİR>METROPOL>BALÇOVA',38.393,27.050),('İZMİR>METROPOL>BAYRAKLI',38.462,27.166),('İZMİR>METROPOL>BORNOVA',38.466,27.221),('İZMİR>METROPOL>BUCA',38.387,27.174),('İZMİR>METROPOL>GAZİEMİR',38.322,27.128),('İZMİR>METROPOL>GÜZELBAHÇE',38.370,26.881),('İZMİR>METROPOL>KARABAĞLAR',38.369,27.126),('İZMİR>METROPOL>KARŞIYAKA',38.456,27.114),('İZMİR>METROPOL>KONAK',38.419,27.128),('İZMİR>METROPOL>NARLIDERE',38.394,27.001),('İZMİR>METROPOL>ÇİĞLİ',38.493,27.053)]
           DAILY=['temperature_2m_mean','temperature_2m_min','temperature_2m_max','apparent_temperature_mean','apparent_temperature_min','apparent_temperature_max','precipitation_sum','rain_sum','snowfall_sum','wind_speed_10m_max','wind_gusts_10m_max','shortwave_radiation_sum','sunshine_duration','daylight_duration','et0_fao_evapotranspiration']
-          S=requests.Session(); S.headers['User-Agent']='gridup-real-weather-export/1.0'
+          S=requests.Session(); S.headers['User-Agent']='gridup-real-weather-export/2.0'
+
           def request_batch(batch):
               params={'latitude':','.join(str(x[1]) for x in batch),'longitude':','.join(str(x[2]) for x in batch),'start_date':START,'end_date':END,'daily':','.join(DAILY),'timezone':'Europe/Istanbul','temperature_unit':'celsius','wind_speed_unit':'kmh','precipitation_unit':'mm'}
               last=None
-              for k in range(6):
+              for k in range(10):
                   try:
-                      r=S.get('https://archive-api.open-meteo.com/v1/archive',params=params,timeout=300); r.raise_for_status(); data=r.json()
+                      r=S.get('https://archive-api.open-meteo.com/v1/archive',params=params,timeout=600)
+                      if r.status_code==429:
+                          wait=max(int(r.headers.get('Retry-After','0') or 0),75)
+                          print('rate limited; sleeping',wait,'seconds',flush=True); time.sleep(wait); continue
+                      r.raise_for_status(); data=r.json()
                       if isinstance(data,dict): data=[data]
                       if len(data)!=len(batch): raise RuntimeError(f'locations {len(data)} != {len(batch)}')
                       return data
                   except Exception as e:
-                      last=e; print('retry',k,e,flush=True); time.sleep(2**k)
-              raise RuntimeError(last)
-          frames=[]
+                      last=e; wait=min(120,10*(k+1)); print('retry',k,e,'sleep',wait,flush=True); time.sleep(wait)
+              raise RuntimeError(last or 'rate limit retries exhausted')
+
+          frames=[]; expected=(pd.Timestamp(END)-pd.Timestamp(START)).days+1
           for start in range(0,len(COORDS),8):
               batch=COORDS[start:start+8]; payload=request_batch(batch)
               for (loc,lat,lon),obj in zip(batch,payload):
-                  daily=obj.get('daily') or {}
-                  f=pd.DataFrame(daily)
-                  if len(f)!=(pd.Timestamp(END)-pd.Timestamp(START)).days+1: raise RuntimeError(f'{loc}: bad row count {len(f)}')
+                  f=pd.DataFrame(obj.get('daily') or {})
+                  if len(f)!=expected: raise RuntimeError(f'{loc}: bad row count {len(f)}')
                   f.insert(0,'lokasyon',loc); f.rename(columns={'time':'tarih'},inplace=True)
-                  f['latitude_requested']=lat; f['longitude_requested']=lon; f['latitude_grid']=obj.get('latitude'); f['longitude_grid']=obj.get('longitude'); f['elevation']=obj.get('elevation'); f['weather_source']='Open-Meteo Historical Weather API'
+                  f['latitude_requested']=lat; f['longitude_requested']=lon
+                  f['latitude_grid']=obj.get('latitude'); f['longitude_grid']=obj.get('longitude'); f['elevation']=obj.get('elevation')
+                  f['weather_source']='Open-Meteo Historical Weather API'
                   frames.append(f)
-              print('batch',start,len(frames),flush=True); time.sleep(1)
+              print('completed locations',len(frames),'of',len(COORDS),flush=True)
+              if start+8 < len(COORDS): time.sleep(35)
+
           w=pd.concat(frames,ignore_index=True).sort_values(['lokasyon','tarih'])
-          assert w.lokasyon.nunique()==47
+          assert w.lokasyon.nunique()==47 and len(w)==47*expected
           assert w[['lokasyon','tarih']].duplicated().sum()==0
           w.to_csv(OUT/'weather_district_daily_2025-01-01_2026-07-31.csv',index=False)
           pd.DataFrame(COORDS,columns=['lokasyon','latitude','longitude']).to_csv(OUT/'district_geocodes.csv',index=False)
-          manifest={'source':'Open-Meteo Historical Weather API','endpoint':'https://archive-api.open-meteo.com/v1/archive','date_start':START,'date_end':END,'districts':47,'rows':int(len(w)),'variables':DAILY,'missing_by_column':{k:int(v) for k,v in w.isna().sum().items()}}
+          manifest={'source':'Open-Meteo Historical Weather API','endpoint':'https://archive-api.open-meteo.com/v1/archive','source_docs':'https://open-meteo.com/en/docs/historical-weather-api','license':'CC BY 4.0','date_start':START,'date_end':END,'days_per_location':expected,'districts':47,'rows':int(len(w)),'variables':DAILY,'missing_by_column':{k:int(v) for k,v in w.isna().sum().items()}}
           (OUT/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
-          print(json.dumps(manifest,ensure_ascii=False),flush=True)
+          print(json.dumps(manifest,ensure_ascii=False,indent=2),flush=True)
           PY
           python /tmp/fetch_gridup_weather.py
       - name: Upload artifact
@@ -78,11 +87,3 @@ jobs:
           name: gridup-weather-fast
           path: tmp_gridup_weather_fast/
           retention-days: 3
-      - name: Commit output
-        shell: bash
-        run: |
-          git config user.name gridup-weather-bot
-          git config user.email gridup-weather-bot@users.noreply.github.com
-          git add tmp_gridup_weather_fast
-          git commit -m '[weather-output] fast real district weather export'
-          git push origin HEAD:tmp-gridup-weather-20260825
