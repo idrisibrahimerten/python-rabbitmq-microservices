@@ -1,0 +1,38 @@
+name: Temporary GridUp Public Repo Export
+
+on:
+  push:
+    branches:
+      - tmp-gridup-weather-20260825
+    paths:
+      - .github/workflows/tmp-gridup-public-repo-export-20260825.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export-public-repo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-gridup-weather-20260825
+
+      - name: Clone public GridUp research repository
+        shell: bash
+        run: |
+          rm -rf /tmp/grid-up-datathon tmp_gridup_public_repo
+          git clone --depth 1 https://github.com/ckproduces/grid-up-datathon.git /tmp/grid-up-datathon
+          rm -rf /tmp/grid-up-datathon/.git /tmp/grid-up-datathon/data/raw /tmp/grid-up-datathon/data/cache /tmp/grid-up-datathon/runs/oof /tmp/grid-up-datathon/runs/subs
+          mkdir -p tmp_gridup_public_repo
+          tar -C /tmp -czf tmp_gridup_public_repo/grid-up-datathon-main.tar.gz grid-up-datathon
+          sha256sum tmp_gridup_public_repo/grid-up-datathon-main.tar.gz > tmp_gridup_public_repo/SHA256SUMS.txt
+          ls -lh tmp_gridup_public_repo
+
+      - name: Upload repository snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: gridup-public-repo-20260825
+          path: tmp_gridup_public_repo/
+          retention-days: 3
