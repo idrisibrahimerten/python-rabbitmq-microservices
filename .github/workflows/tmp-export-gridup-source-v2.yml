@@ -1,0 +1,33 @@
+name: Temporary Export Public GridUp Source V2
+
+on:
+  push:
+    branches:
+      - tmp-gridup-weather-20260825
+    paths:
+      - .github/workflows/tmp-export-gridup-source-v2.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-gridup-weather-20260825
+
+      - name: Clone public research repository
+        run: |
+          git clone --depth 1 https://github.com/ckproduces/grid-up-datathon.git /tmp/grid-up-datathon
+          rm -rf /tmp/grid-up-datathon/.git /tmp/grid-up-datathon/data/raw /tmp/grid-up-datathon/runs/oof /tmp/grid-up-datathon/runs/subs
+          tar -C /tmp -czf /tmp/grid-up-datathon-source.tar.gz grid-up-datathon
+
+      - name: Upload source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gridup-public-source-v2
+          path: /tmp/grid-up-datathon-source.tar.gz
+          retention-days: 3
