@@ -1,0 +1,81 @@
+name: Temporary GridUp Public External Export
+
+on:
+  push:
+    branches:
+      - tmp-gridup-weather-20260825
+    paths:
+      - .github/workflows/tmp-gridup-public-external-export.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export-public-external:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-gridup-weather-20260825
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install parquet dependencies
+        run: python -m pip install --quiet pandas pyarrow
+
+      - name: Clone public research repository and export external data
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/ckproduces/grid-up-datathon.git /tmp/gridup-public
+          mkdir -p tmp_gridup_external
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import pandas as pd
+
+          src = Path('/tmp/gridup-public/data/external')
+          out = Path('tmp_gridup_external')
+          names = [
+              'openmeteo_daily.parquet',
+              'openmeteo_air_quality_daily.parquet',
+              'openmeteo_synoptic_daily.parquet',
+              'district_structure.parquet',
+              'teias_national_load_daily.parquet',
+              'gdz_outage_daily.parquet',
+              'izmir_arterial_traffic_daily.parquet',
+              'izmir_vehicle_counts_daily.parquet',
+              'epdk_monthly_billed.parquet',
+          ]
+          manifest = {'source_repository':'ckproduces/grid-up-datathon','files':{}}
+          for name in names:
+              p = src / name
+              if not p.exists():
+                  raise FileNotFoundError(p)
+              df = pd.read_parquet(p)
+              csv_name = name.replace('.parquet','.csv.gz')
+              df.to_csv(out / csv_name, index=False, compression='gzip')
+              manifest['files'][name] = {
+                  'rows': int(len(df)),
+                  'columns': list(map(str, df.columns)),
+                  'missing': {str(k): int(v) for k,v in df.isna().sum().items()},
+                  'date_min': str(df['date'].min()) if 'date' in df.columns else None,
+                  'date_max': str(df['date'].max()) if 'date' in df.columns else None,
+              }
+              print(name, df.shape)
+          for text_name in ['CITATION.md','district_coords.json']:
+              (out / text_name).write_bytes((src / text_name).read_bytes())
+          (out / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
+          PY
+          tar -czf gridup_public_external.tar.gz tmp_gridup_external
+          ls -lh gridup_public_external.tar.gz tmp_gridup_external/*
+
+      - name: Upload external-data artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gridup-public-external
+          path: gridup_public_external.tar.gz
+          retention-days: 3
