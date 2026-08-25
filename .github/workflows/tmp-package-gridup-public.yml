@@ -1,0 +1,32 @@
+name: Temporary Package GridUp Public Repo
+
+on:
+  push:
+    branches:
+      - tmp-gridup-weather-20260825
+    paths:
+      - .github/workflows/tmp-package-gridup-public.yml
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-gridup-weather-20260825
+      - name: Clone public research repository
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/ckproduces/grid-up-datathon.git public_gridup
+          rm -rf public_gridup/.git public_gridup/data/raw public_gridup/runs/oof public_gridup/runs/subs
+          tar -czf gridup_public_repo.tar.gz public_gridup
+      - name: Upload repository artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gridup-public-repo
+          path: gridup_public_repo.tar.gz
+          retention-days: 1
