@@ -1,0 +1,88 @@
+name: Temporary GridUp Extra Weather Export
+
+on:
+  push:
+    branches: [tmp-gridup-weather-20260825]
+    paths: [.github/workflows/tmp-gridup-weather-extra.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  export-extra-weather:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-gridup-weather-20260825
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install --quiet requests pandas
+      - name: Fetch additional real historical weather variables
+        shell: bash
+        run: |
+          cat > /tmp/fetch_extra.py <<'PY'
+          import ast, json, re, time
+          from pathlib import Path
+          import pandas as pd
+          import requests
+
+          START='2025-01-01'; END='2026-07-31'
+          OUT=Path('tmp_gridup_weather_extra'); OUT.mkdir(exist_ok=True)
+          src=Path('.github/workflows/tmp-gridup-weather-fast.yml').read_text(encoding='utf-8')
+          m=re.search(r"COORDS=\[(.*?)\]\n\s*DAILY=",src,re.S)
+          if not m: raise RuntimeError('Could not parse coordinate list')
+          COORDS=ast.literal_eval('['+m.group(1)+']')
+          VARS=['relative_humidity_2m_mean','relative_humidity_2m_min','relative_humidity_2m_max',
+                'dew_point_2m_mean','cloud_cover_mean','pressure_msl_mean','surface_pressure_mean',
+                'wind_speed_10m_mean','wind_direction_10m_dominant','vapour_pressure_deficit_max',
+                'soil_moisture_0_to_7cm_mean','soil_temperature_0_to_7cm_mean']
+          CORE=['relative_humidity_2m_mean','dew_point_2m_mean','cloud_cover_mean','pressure_msl_mean',
+                'surface_pressure_mean','wind_speed_10m_mean','wind_direction_10m_dominant','vapour_pressure_deficit_max']
+          ses=requests.Session(); ses.headers.update({'User-Agent':'gridup-extra-weather/1.0'})
+          def get(loc,lat,lon,variables):
+            params={'latitude':lat,'longitude':lon,'start_date':START,'end_date':END,
+                    'daily':','.join(variables),'timezone':'Europe/Istanbul'}
+            last=None
+            for k in range(6):
+              try:
+                r=ses.get('https://archive-api.open-meteo.com/v1/archive',params=params,timeout=180)
+                if r.status_code>=400: raise RuntimeError(f'{r.status_code} {r.text[:800]}')
+                j=r.json()
+                if j.get('error'): raise RuntimeError(str(j))
+                return j
+              except Exception as e:
+                last=e; time.sleep(min(30,2**k))
+            raise RuntimeError(f'{loc}: {last}')
+          frames=[]; used_map={}
+          for i,(loc,lat,lon) in enumerate(COORDS,1):
+            try:
+              j=get(loc,lat,lon,VARS); used=VARS
+            except Exception as e:
+              print('fallback',loc,e,flush=True); j=get(loc,lat,lon,CORE); used=CORE
+            f=pd.DataFrame(j['daily']).rename(columns={'time':'tarih'}); f.insert(0,'lokasyon',loc)
+            frames.append(f); used_map[loc]=used
+            print(f'{i:02d}/{len(COORDS)} {loc} {len(f)} days {len(used)} vars',flush=True)
+            time.sleep(0.25)
+          d=pd.concat(frames,ignore_index=True).sort_values(['lokasyon','tarih'])
+          expected=(pd.Timestamp(END)-pd.Timestamp(START)).days+1
+          assert len(d)==len(COORDS)*expected
+          assert d[['lokasyon','tarih']].duplicated().sum()==0
+          d.to_csv(OUT/f'weather_extra_daily_{START}_{END}.csv',index=False)
+          manifest={'source':'Open-Meteo Historical Weather API','endpoint':'https://archive-api.open-meteo.com/v1/archive',
+                    'date_start':START,'date_end':END,'districts':len(COORDS),'rows':len(d),
+                    'variables':[x for x in d.columns if x not in ['lokasyon','tarih']],
+                    'missing_by_column':{c:int(v) for c,v in d.isna().sum().items()},'used_by_location':used_map}
+          (OUT/'manifest_extra.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
+          print(json.dumps({k:manifest[k] for k in ['districts','rows','variables','missing_by_column']},ensure_ascii=False),flush=True)
+          PY
+          python /tmp/fetch_extra.py
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gridup-weather-extra
+          path: tmp_gridup_weather_extra/
+          retention-days: 3
