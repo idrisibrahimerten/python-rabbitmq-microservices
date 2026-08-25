@@ -1,0 +1,97 @@
+name: Temporary GridUp Batched Historical Weather Export
+
+on:
+  push:
+    branches:
+      - tmp-gridup-weather-20260825
+    paths:
+      - .github/workflows/tmp-gridup-weather-batch-20260825.yml
+
+permissions:
+  contents: write
+
+jobs:
+  export-weather-batch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-gridup-weather-20260825
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install --quiet pandas requests
+
+      - name: Fetch real district-level historical weather in batches
+        shell: bash
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+          import json, time
+          from pathlib import Path
+          import pandas as pd
+          import requests
+
+          START='2025-01-01'; END='2026-07-31'
+          OUT=Path('tmp_gridup_weather_batch'); OUT.mkdir(exist_ok=True)
+          LOCS=[
+          ('MANİSA>AHMETLİ',38.519,27.938),('MANİSA>AKHİSAR',38.918,27.840),('MANİSA>ALAŞEHİR',38.350,28.517),('MANİSA>DEMİRCİ',39.046,28.659),('MANİSA>GÖLMARMARA',38.713,27.914),('MANİSA>GÖRDES',38.932,28.290),('MANİSA>KIRKAĞAÇ',39.106,27.669),('MANİSA>KULA',38.548,28.649),('MANİSA>KÖPRÜBAŞI',38.749,28.404),('MANİSA>SALİHLİ',38.482,28.139),('MANİSA>SARIGÖL',38.239,28.697),('MANİSA>SARUHANLI',38.734,27.568),('MANİSA>SELENDİ',38.744,28.867),('MANİSA>SOMA',39.185,27.609),('MANİSA>TURGUTLU',38.500,27.705),('MANİSA>YUNUSEMRE',38.608,27.418),('MANİSA>ŞEHZADELER',38.613,27.430),
+          ('İZMİR>GÜNEY BÖLGE>BAYINDIR',38.217,27.648),('İZMİR>GÜNEY BÖLGE>BEYDAĞ',38.086,28.205),('İZMİR>GÜNEY BÖLGE>KARABURUN',38.637,26.511),('İZMİR>GÜNEY BÖLGE>KEMALPAŞA',38.427,27.417),('İZMİR>GÜNEY BÖLGE>KİRAZ',38.231,28.204),('İZMİR>GÜNEY BÖLGE>MENDERES',38.254,27.134),('İZMİR>GÜNEY BÖLGE>SEFERİHİSAR',38.197,26.839),('İZMİR>GÜNEY BÖLGE>SELÇUK',37.949,27.370),('İZMİR>GÜNEY BÖLGE>TORBALI',38.161,27.358),('İZMİR>GÜNEY BÖLGE>TİRE',38.089,27.735),('İZMİR>GÜNEY BÖLGE>URLA',38.322,26.764),('İZMİR>GÜNEY BÖLGE>ÇEŞME',38.324,26.303),('İZMİR>GÜNEY BÖLGE>ÖDEMİŞ',38.228,27.972),
+          ('İZMİR>KUZEY BÖLGE>ALİAĞA',38.800,26.972),('İZMİR>KUZEY BÖLGE>BERGAMA',39.121,27.180),('İZMİR>KUZEY BÖLGE>DİKİLİ',39.072,26.889),('İZMİR>KUZEY BÖLGE>FOÇA',38.670,26.756),('İZMİR>KUZEY BÖLGE>KINIK',39.087,27.383),('İZMİR>KUZEY BÖLGE>MENEMEN',38.607,27.069),
+          ('İZMİR>METROPOL>BALÇOVA',38.393,27.050),('İZMİR>METROPOL>BAYRAKLI',38.462,27.166),('İZMİR>METROPOL>BORNOVA',38.466,27.221),('İZMİR>METROPOL>BUCA',38.387,27.174),('İZMİR>METROPOL>GAZİEMİR',38.322,27.128),('İZMİR>METROPOL>GÜZELBAHÇE',38.370,26.881),('İZMİR>METROPOL>KARABAĞLAR',38.369,27.126),('İZMİR>METROPOL>KARŞIYAKA',38.456,27.114),('İZMİR>METROPOL>KONAK',38.419,27.128),('İZMİR>METROPOL>NARLIDERE',38.394,27.001),('İZMİR>METROPOL>ÇİĞLİ',38.493,27.053)]
+
+          DAILY=','.join(['temperature_2m_mean','temperature_2m_min','temperature_2m_max','apparent_temperature_mean','apparent_temperature_min','apparent_temperature_max','precipitation_sum','rain_sum','precipitation_hours','wind_speed_10m_max','wind_gusts_10m_max','shortwave_radiation_sum','sunshine_duration','daylight_duration','et0_fao_evapotranspiration'])
+          URL='https://archive-api.open-meteo.com/v1/archive'; session=requests.Session(); session.headers.update({'User-Agent':'gridup-weather-enrichment/1.0'})
+          def get(params):
+              last=None
+              for i in range(6):
+                  try:
+                      r=session.get(URL,params=params,timeout=420); r.raise_for_status(); x=r.json()
+                      if isinstance(x,dict) and x.get('error'): raise RuntimeError(x.get('reason'))
+                      return x
+                  except Exception as exc:
+                      last=exc; print(f'retry {i+1}: {exc}',flush=True)
+                      if i<5: time.sleep(min(60,3*(2**i)))
+              raise RuntimeError(last)
+
+          frames=[]; batch_size=8
+          for begin in range(0,len(LOCS),batch_size):
+              batch=LOCS[begin:begin+batch_size]
+              params={'latitude':','.join(str(x[1]) for x in batch),'longitude':','.join(str(x[2]) for x in batch),'start_date':START,'end_date':END,'daily':DAILY,'hourly':'relative_humidity_2m,cloud_cover','timezone':'Europe/Istanbul','temperature_unit':'celsius','wind_speed_unit':'kmh','precipitation_unit':'mm','timeformat':'iso8601'}
+              payload=get(params); payload=[payload] if isinstance(payload,dict) else payload
+              if len(payload)!=len(batch): raise RuntimeError(f'batch mismatch {len(payload)} != {len(batch)}')
+              for (loc,lat,lon),item in zip(batch,payload):
+                  d=pd.DataFrame(item['daily']).rename(columns={'time':'tarih'})
+                  h=pd.DataFrame(item['hourly']); h['tarih']=pd.to_datetime(h['time']).dt.strftime('%Y-%m-%d')
+                  q=h.groupby('tarih',as_index=False).agg(relative_humidity_2m_mean=('relative_humidity_2m','mean'),relative_humidity_2m_min=('relative_humidity_2m','min'),relative_humidity_2m_max=('relative_humidity_2m','max'),cloud_cover_mean=('cloud_cover','mean'),cloud_cover_min=('cloud_cover','min'),cloud_cover_max=('cloud_cover','max'))
+                  f=d.merge(q,on='tarih',how='left',validate='one_to_one'); f.insert(0,'lokasyon',loc)
+                  f['latitude_requested']=lat; f['longitude_requested']=lon; f['latitude_grid']=item.get('latitude'); f['longitude_grid']=item.get('longitude'); f['elevation']=item.get('elevation'); f['weather_source']='Open-Meteo Historical Weather API'; frames.append(f)
+              print(f'{begin+len(batch)}/{len(LOCS)} locations complete',flush=True); time.sleep(2)
+
+          weather=pd.concat(frames,ignore_index=True); weather['tarih']=pd.to_datetime(weather['tarih']).dt.strftime('%Y-%m-%d'); weather.sort_values(['lokasyon','tarih'],inplace=True,ignore_index=True)
+          days=(pd.Timestamp(END)-pd.Timestamp(START)).days+1
+          assert days==577 and weather.lokasyon.nunique()==47 and len(weather)==47*days
+          assert weather[['lokasyon','tarih']].duplicated().sum()==0 and weather.tarih.min()==START and weather.tarih.max()==END
+          weather.to_csv(OUT/f'weather_district_daily_{START}_{END}.csv',index=False)
+          manifest={'source':'Open-Meteo Historical Weather API','endpoint':URL,'start':START,'end':END,'districts':47,'days_per_district':days,'rows':int(len(weather)),'columns':weather.columns.tolist(),'missing_by_column':{k:int(v) for k,v in weather.isna().sum().items()},'duplicate_location_date':int(weather[['lokasyon','tarih']].duplicated().sum())}
+          (OUT/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8'); print(json.dumps(manifest,ensure_ascii=False,indent=2),flush=True)
+          PY
+
+      - name: Upload weather artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gridup-weather-batch-20260825
+          path: tmp_gridup_weather_batch/
+          retention-days: 3
+
+      - name: Commit temporary weather output to branch
+        run: |
+          git config user.name "gridup-weather-bot"
+          git config user.email "gridup-weather-bot@users.noreply.github.com"
+          git add tmp_gridup_weather_batch
+          git commit -m "[weather-output] batched GridUp historical weather data"
+          git push origin HEAD:tmp-gridup-weather-20260825
