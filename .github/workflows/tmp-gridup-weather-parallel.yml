@@ -1,0 +1,111 @@
+name: Temporary GridUp Weather Export Parallel
+
+on:
+  push:
+    branches: [tmp-gridup-weather-20260825]
+    paths: [.github/workflows/tmp-gridup-weather-parallel.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  export-weather:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-gridup-weather-20260825
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install --quiet pandas requests
+      - name: Fetch real archived district weather in parallel
+        shell: bash
+        run: |
+          cat > /tmp/fetch_weather.py <<'PY'
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          from pathlib import Path
+          import json, time
+          import pandas as pd
+          import requests
+
+          START='2025-01-01'; END='2026-07-31'
+          OUT=Path('tmp_gridup_weather_parallel'); OUT.mkdir(exist_ok=True)
+          LOC={
+          'MANİSA>AHMETLİ':(38.519,27.938),'MANİSA>AKHİSAR':(38.918,27.840),'MANİSA>ALAŞEHİR':(38.350,28.517),'MANİSA>DEMİRCİ':(39.046,28.659),'MANİSA>GÖLMARMARA':(38.713,27.914),'MANİSA>GÖRDES':(38.932,28.290),'MANİSA>KIRKAĞAÇ':(39.106,27.669),'MANİSA>KULA':(38.548,28.649),'MANİSA>KÖPRÜBAŞI':(38.749,28.404),'MANİSA>SALİHLİ':(38.482,28.139),'MANİSA>SARIGÖL':(38.239,28.697),'MANİSA>SARUHANLI':(38.734,27.568),'MANİSA>SELENDİ':(38.744,28.867),'MANİSA>SOMA':(39.185,27.609),'MANİSA>TURGUTLU':(38.500,27.705),'MANİSA>YUNUSEMRE':(38.608,27.418),'MANİSA>ŞEHZADELER':(38.613,27.430),
+          'İZMİR>GÜNEY BÖLGE>BAYINDIR':(38.217,27.648),'İZMİR>GÜNEY BÖLGE>BEYDAĞ':(38.086,28.205),'İZMİR>GÜNEY BÖLGE>KARABURUN':(38.637,26.511),'İZMİR>GÜNEY BÖLGE>KEMALPAŞA':(38.427,27.417),'İZMİR>GÜNEY BÖLGE>KİRAZ':(38.231,28.204),'İZMİR>GÜNEY BÖLGE>MENDERES':(38.254,27.134),'İZMİR>GÜNEY BÖLGE>SEFERİHİSAR':(38.197,26.839),'İZMİR>GÜNEY BÖLGE>SELÇUK':(37.949,27.370),'İZMİR>GÜNEY BÖLGE>TORBALI':(38.161,27.358),'İZMİR>GÜNEY BÖLGE>TİRE':(38.089,27.735),'İZMİR>GÜNEY BÖLGE>URLA':(38.322,26.764),'İZMİR>GÜNEY BÖLGE>ÇEŞME':(38.324,26.303),'İZMİR>GÜNEY BÖLGE>ÖDEMİŞ':(38.228,27.972),
+          'İZMİR>KUZEY BÖLGE>ALİAĞA':(38.800,26.972),'İZMİR>KUZEY BÖLGE>BERGAMA':(39.121,27.180),'İZMİR>KUZEY BÖLGE>DİKİLİ':(39.072,26.889),'İZMİR>KUZEY BÖLGE>FOÇA':(38.670,26.756),'İZMİR>KUZEY BÖLGE>KINIK':(39.087,27.383),'İZMİR>KUZEY BÖLGE>MENEMEN':(38.607,27.069),
+          'İZMİR>METROPOL>BALÇOVA':(38.393,27.050),'İZMİR>METROPOL>BAYRAKLI':(38.462,27.166),'İZMİR>METROPOL>BORNOVA':(38.466,27.221),'İZMİR>METROPOL>BUCA':(38.387,27.174),'İZMİR>METROPOL>GAZİEMİR':(38.322,27.128),'İZMİR>METROPOL>GÜZELBAHÇE':(38.370,26.881),'İZMİR>METROPOL>KARABAĞLAR':(38.369,27.126),'İZMİR>METROPOL>KARŞIYAKA':(38.456,27.114),'İZMİR>METROPOL>KONAK':(38.419,27.128),'İZMİR>METROPOL>NARLIDERE':(38.394,27.001),'İZMİR>METROPOL>ÇİĞLİ':(38.493,27.053)}
+
+          DAILY=','.join(['temperature_2m_mean','temperature_2m_min','temperature_2m_max','apparent_temperature_mean','apparent_temperature_min','apparent_temperature_max','precipitation_sum','rain_sum','snowfall_sum','precipitation_hours','wind_speed_10m_max','wind_gusts_10m_max','shortwave_radiation_sum','sunshine_duration','daylight_duration','et0_fao_evapotranspiration'])
+          HOURLY=','.join(['relative_humidity_2m','dew_point_2m','cloud_cover','surface_pressure'])
+          URL='https://historical-forecast-api.open-meteo.com/v1/forecast'
+
+          def get(location,lat,lon):
+              params={'latitude':lat,'longitude':lon,'start_date':START,'end_date':END,'daily':DAILY,'hourly':HOURLY,'timezone':'Europe/Istanbul','temperature_unit':'celsius','wind_speed_unit':'kmh','precipitation_unit':'mm','timeformat':'iso8601'}
+              err=None
+              for attempt in range(5):
+                  try:
+                      r=requests.get(URL,params=params,timeout=180,headers={'User-Agent':'gridup-real-weather/1.0'})
+                      r.raise_for_status(); data=r.json()
+                      if data.get('error'): raise RuntimeError(data.get('reason'))
+                      daily=pd.DataFrame(data['daily']).rename(columns={'time':'tarih'})
+                      hourly=pd.DataFrame(data['hourly']).rename(columns={'time':'ts'})
+                      hourly['tarih']=pd.to_datetime(hourly['ts']).dt.strftime('%Y-%m-%d')
+                      agg=hourly.groupby('tarih',as_index=False).agg(
+                          relative_humidity_2m_mean=('relative_humidity_2m','mean'),
+                          relative_humidity_2m_min=('relative_humidity_2m','min'),
+                          relative_humidity_2m_max=('relative_humidity_2m','max'),
+                          dew_point_2m_mean=('dew_point_2m','mean'),
+                          cloud_cover_mean=('cloud_cover','mean'),
+                          surface_pressure_mean=('surface_pressure','mean'))
+                      daily['tarih']=pd.to_datetime(daily['tarih']).dt.strftime('%Y-%m-%d')
+                      f=daily.merge(agg,on='tarih',how='left')
+                      f.insert(0,'lokasyon',location)
+                      f['latitude_requested']=lat; f['longitude_requested']=lon
+                      f['latitude_grid']=data.get('latitude'); f['longitude_grid']=data.get('longitude'); f['elevation']=data.get('elevation')
+                      f['weather_source']='Open-Meteo Historical Forecast API'
+                      expected=(pd.Timestamp(END)-pd.Timestamp(START)).days+1
+                      if len(f)!=expected: raise RuntimeError(f'expected {expected}, got {len(f)}')
+                      return f
+                  except Exception as e:
+                      err=e; time.sleep(2**attempt)
+              raise RuntimeError(f'{location}: {err}')
+
+          frames=[]; failures=[]
+          with ThreadPoolExecutor(max_workers=8) as ex:
+              futures={ex.submit(get,loc,*coord):loc for loc,coord in LOC.items()}
+              for fut in as_completed(futures):
+                  loc=futures[fut]
+                  try:
+                      x=fut.result(); frames.append(x); print('OK',loc,len(x),flush=True)
+                  except Exception as e:
+                      failures.append({'lokasyon':loc,'error':repr(e)}); print('FAIL',loc,e,flush=True)
+          if failures: raise RuntimeError(json.dumps(failures,ensure_ascii=False))
+          w=pd.concat(frames,ignore_index=True).sort_values(['lokasyon','tarih'])
+          assert w['lokasyon'].nunique()==47
+          assert w[['lokasyon','tarih']].duplicated().sum()==0
+          expected=((pd.Timestamp(END)-pd.Timestamp(START)).days+1)*47
+          assert len(w)==expected,(len(w),expected)
+          w.to_csv(OUT/'weather_district_daily_2025-01-01_2026-07-31.csv',index=False)
+          pd.DataFrame([{'lokasyon':k,'latitude':v[0],'longitude':v[1]} for k,v in LOC.items()]).sort_values('lokasyon').to_csv(OUT/'district_coordinates.csv',index=False)
+          manifest={'source':'Open-Meteo Historical Forecast API','official_docs':'https://open-meteo.com/en/docs/historical-forecast-api','endpoint':URL,'start':START,'end':END,'districts':47,'rows':int(len(w)),'columns':w.columns.tolist(),'missing_by_column':{c:int(v) for c,v in w.isna().sum().items()}}
+          (OUT/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
+          print(json.dumps(manifest,ensure_ascii=False,indent=2),flush=True)
+          PY
+          python /tmp/fetch_weather.py
+      - name: Upload weather artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gridup-weather-parallel
+          path: tmp_gridup_weather_parallel/
+          retention-days: 3
+      - name: Commit output to temporary branch
+        run: |
+          git config user.name gridup-weather-bot
+          git config user.email gridup-weather-bot@users.noreply.github.com
+          git add tmp_gridup_weather_parallel
+          git commit -m '[weather-output] parallel real archived district weather'
+          git push origin HEAD:tmp-gridup-weather-20260825
