@@ -13,7 +13,7 @@ permissions:
 jobs:
   export-weather:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,28 +26,74 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --disable-pip-version-check --quiet requests pandas
 
-      - name: Extract and run weather fetch script
+      - name: Fetch realised district weather in batches
         shell: bash
         run: |
           python - <<'PY'
+          from __future__ import annotations
+          import json, time
           from pathlib import Path
-          p = Path('.github/workflows/tmp-gridup-weather.yml')
-          lines = p.read_text(encoding='utf-8').splitlines()
-          start = next(i for i, x in enumerate(lines) if x.strip() == '- name: Fetch district-level historical weather')
-          run_line = next(i for i in range(start, len(lines)) if lines[i].strip() == 'run: |')
-          end = next(i for i in range(run_line + 1, len(lines)) if lines[i].strip() == '- name: Upload weather artifact')
-          script_lines = lines[run_line + 1:end]
-          indent = min(len(x) - len(x.lstrip()) for x in script_lines if x.strip())
-          script = '\n'.join(x[indent:] if len(x) >= indent else '' for x in script_lines) + '\n'
-          Path('/tmp/fetch_gridup_weather.sh').write_text(script, encoding='utf-8')
+          import pandas as pd
+          import requests
+
+          START='2025-01-01'; END='2026-07-31'
+          OUT=Path('tmp_gridup_weather_fast'); OUT.mkdir(exist_ok=True)
+          LOCS=[
+          ('MANİSA>AHMETLİ',38.519,27.938),('MANİSA>AKHİSAR',38.918,27.840),('MANİSA>ALAŞEHİR',38.350,28.517),('MANİSA>DEMİRCİ',39.046,28.659),('MANİSA>GÖLMARMARA',38.713,27.914),('MANİSA>GÖRDES',38.932,28.290),('MANİSA>KIRKAĞAÇ',39.106,27.669),('MANİSA>KULA',38.548,28.649),('MANİSA>KÖPRÜBAŞI',38.749,28.404),('MANİSA>SALİHLİ',38.482,28.139),('MANİSA>SARIGÖL',38.239,28.697),('MANİSA>SARUHANLI',38.734,27.568),('MANİSA>SELENDİ',38.744,28.867),('MANİSA>SOMA',39.185,27.609),('MANİSA>TURGUTLU',38.500,27.705),('MANİSA>YUNUSEMRE',38.608,27.418),('MANİSA>ŞEHZADELER',38.613,27.430),
+          ('İZMİR>GÜNEY BÖLGE>BAYINDIR',38.217,27.648),('İZMİR>GÜNEY BÖLGE>BEYDAĞ',38.086,28.205),('İZMİR>GÜNEY BÖLGE>KARABURUN',38.637,26.511),('İZMİR>GÜNEY BÖLGE>KEMALPAŞA',38.427,27.417),('İZMİR>GÜNEY BÖLGE>KİRAZ',38.231,28.204),('İZMİR>GÜNEY BÖLGE>MENDERES',38.254,27.134),('İZMİR>GÜNEY BÖLGE>SEFERİHİSAR',38.197,26.839),('İZMİR>GÜNEY BÖLGE>SELÇUK',37.949,27.370),('İZMİR>GÜNEY BÖLGE>TORBALI',38.161,27.358),('İZMİR>GÜNEY BÖLGE>TİRE',38.089,27.735),('İZMİR>GÜNEY BÖLGE>URLA',38.322,26.764),('İZMİR>GÜNEY BÖLGE>ÇEŞME',38.324,26.303),('İZMİR>GÜNEY BÖLGE>ÖDEMİŞ',38.228,27.972),
+          ('İZMİR>KUZEY BÖLGE>ALİAĞA',38.800,26.972),('İZMİR>KUZEY BÖLGE>BERGAMA',39.121,27.180),('İZMİR>KUZEY BÖLGE>DİKİLİ',39.072,26.889),('İZMİR>KUZEY BÖLGE>FOÇA',38.670,26.756),('İZMİR>KUZEY BÖLGE>KINIK',39.087,27.383),('İZMİR>KUZEY BÖLGE>MENEMEN',38.607,27.069),
+          ('İZMİR>METROPOL>BALÇOVA',38.393,27.050),('İZMİR>METROPOL>BAYRAKLI',38.462,27.166),('İZMİR>METROPOL>BORNOVA',38.466,27.221),('İZMİR>METROPOL>BUCA',38.387,27.174),('İZMİR>METROPOL>GAZİEMİR',38.322,27.128),('İZMİR>METROPOL>GÜZELBAHÇE',38.370,26.881),('İZMİR>METROPOL>KARABAĞLAR',38.369,27.126),('İZMİR>METROPOL>KARŞIYAKA',38.456,27.114),('İZMİR>METROPOL>KONAK',38.419,27.128),('İZMİR>METROPOL>NARLIDERE',38.394,27.001),('İZMİR>METROPOL>ÇİĞLİ',38.493,27.053)]
+
+          DAILY=','.join(['temperature_2m_mean','temperature_2m_min','temperature_2m_max','apparent_temperature_mean','apparent_temperature_min','apparent_temperature_max','precipitation_sum','rain_sum','snowfall_sum','precipitation_hours','wind_speed_10m_max','wind_gusts_10m_max','shortwave_radiation_sum','sunshine_duration','daylight_duration','et0_fao_evapotranspiration'])
+          HOURLY='relative_humidity_2m,cloud_cover'
+          S=requests.Session(); S.headers.update({'User-Agent':'gridup-weather-enrichment/2.0'})
+
+          def get(params):
+              last=None
+              for k in range(6):
+                  try:
+                      r=S.get('https://historical-forecast-api.open-meteo.com/v1/forecast',params=params,timeout=240)
+                      r.raise_for_status(); x=r.json()
+                      if isinstance(x,dict) and x.get('error'): raise RuntimeError(x.get('reason'))
+                      return x
+                  except Exception as e:
+                      last=e; time.sleep(min(20,2**k))
+              raise RuntimeError(last)
+
+          frames=[]
+          for start in range(0,len(LOCS),8):
+              chunk=LOCS[start:start+8]
+              params={'latitude':','.join(str(x[1]) for x in chunk),'longitude':','.join(str(x[2]) for x in chunk),'start_date':START,'end_date':END,'daily':DAILY,'hourly':HOURLY,'timezone':'Europe/Istanbul','temperature_unit':'celsius','wind_speed_unit':'kmh','precipitation_unit':'mm','timeformat':'iso8601'}
+              payload=get(params)
+              if isinstance(payload,dict): payload=[payload]
+              if len(payload)!=len(chunk): raise RuntimeError(f'batch size mismatch {len(payload)} != {len(chunk)}')
+              for (loc,lat,lon),obj in zip(chunk,payload):
+                  d=pd.DataFrame(obj['daily']).rename(columns={'time':'tarih'})
+                  h=pd.DataFrame(obj['hourly']).rename(columns={'time':'datetime'})
+                  h['tarih']=h['datetime'].str[:10]
+                  ha=h.groupby('tarih',as_index=False).agg(relative_humidity_2m_mean=('relative_humidity_2m','mean'),relative_humidity_2m_min=('relative_humidity_2m','min'),relative_humidity_2m_max=('relative_humidity_2m','max'),cloud_cover_mean=('cloud_cover','mean'))
+                  d=d.merge(ha,on='tarih',how='left')
+                  d.insert(0,'lokasyon',loc); d['latitude_requested']=lat; d['longitude_requested']=lon; d['latitude_grid']=obj.get('latitude'); d['longitude_grid']=obj.get('longitude'); d['elevation']=obj.get('elevation'); d['weather_source']='Open-Meteo Historical Forecast API'
+                  frames.append(d)
+              print('completed',start+len(chunk),'of',len(LOCS),flush=True)
+
+          w=pd.concat(frames,ignore_index=True).sort_values(['lokasyon','tarih'])
+          expected=(pd.Timestamp(END)-pd.Timestamp(START)).days+1
+          assert len(w)==len(LOCS)*expected, (len(w),len(LOCS)*expected)
+          assert w[['lokasyon','tarih']].duplicated().sum()==0
+          assert w.lokasyon.nunique()==len(LOCS)
+          w.to_csv(OUT/f'weather_district_daily_{START}_{END}.csv',index=False)
+          pd.DataFrame(LOCS,columns=['lokasyon','latitude','longitude']).to_csv(OUT/'district_geocodes.csv',index=False)
+          manifest={'start':START,'end':END,'districts':len(LOCS),'days_per_district':expected,'rows':len(w),'source':'Open-Meteo Historical Forecast API','endpoint':'https://historical-forecast-api.open-meteo.com/v1/forecast','variables':[c for c in w.columns if c not in ['lokasyon','tarih','weather_source']],'missing_by_column':{c:int(v) for c,v in w.isna().sum().items()}}
+          (OUT/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
+          print(json.dumps(manifest,ensure_ascii=False,indent=2),flush=True)
           PY
-          bash /tmp/fetch_gridup_weather.sh
 
       - name: Upload weather artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gridup-weather-district-daily
-          path: tmp_gridup_weather/
+          name: gridup-weather-district-daily-fast
+          path: tmp_gridup_weather_fast/
           retention-days: 3
 
       - name: Commit temporary weather output to branch
@@ -55,6 +101,6 @@ jobs:
         run: |
           git config user.name "gridup-weather-bot"
           git config user.email "gridup-weather-bot@users.noreply.github.com"
-          git add tmp_gridup_weather
-          git commit -m "[weather-output] export temporary GridUp weather data"
+          git add tmp_gridup_weather_fast
+          git commit -m "[weather-output] export batched GridUp weather data"
           git push origin HEAD:tmp-gridup-weather-20260825
